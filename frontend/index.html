@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QA Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .status-passed { background-color: #10b981; }
+        .status-failed { background-color: #ef4444; }
+        .status-skipped { background-color: #6b7280; }
+        .status-flaky { background-color: #f59e0b; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <!-- Header -->
+    <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <div class="flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">🧪</span>
+                <h1 class="text-xl font-bold">QA Dashboard</h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <select id="projectFilter" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    <option value="">All Projects</option>
+                </select>
+                <button onclick="refreshData()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm">
+                    🔄 Refresh
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="p-6">
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">Total Runs (30d)</div>
+                <div class="text-3xl font-bold mt-1" id="totalRuns">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">Avg Pass Rate</div>
+                <div class="text-3xl font-bold mt-1 text-green-400" id="avgPassRate">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">Total Tests</div>
+                <div class="text-3xl font-bold mt-1" id="totalTests">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">Failed Tests</div>
+                <div class="text-3xl font-bold mt-1 text-red-400" id="totalFailed">-</div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Trend Chart -->
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <h2 class="text-lg font-semibold mb-4">📈 Pass Rate Trend</h2>
+                <canvas id="trendChart" height="200"></canvas>
+            </div>
+
+            <!-- Test Distribution -->
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <h2 class="text-lg font-semibold mb-4">📊 Test Distribution</h2>
+                <canvas id="distributionChart" height="200"></canvas>
+            </div>
+        </div>
+
+        <!-- Recent Runs Table -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            <div class="px-4 py-3 border-b border-gray-700">
+                <h2 class="text-lg font-semibold">🕐 Recent Test Runs</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-750">
+                        <tr class="text-left text-gray-400 text-sm">
+                            <th class="px-4 py-3">Status</th>
+                            <th class="px-4 py-3">Run ID</th>
+                            <th class="px-4 py-3">Project</th>
+                            <th class="px-4 py-3">Branch</th>
+                            <th class="px-4 py-3">Pass Rate</th>
+                            <th class="px-4 py-3">Tests</th>
+                            <th class="px-4 py-3">Duration</th>
+                            <th class="px-4 py-3">Time</th>
+                            <th class="px-4 py-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="runsTable">
+                        <tr>
+                            <td colspan="9" class="px-4 py-8 text-center text-gray-500">
+                                Loading test runs...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Failed Tests Modal -->
+        <div id="failedModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-lg w-full max-w-3xl max-h-[80vh] overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+                    <h3 class="text-lg font-semibold">❌ Failed Tests</h3>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                </div>
+                <div id="failedTestsList" class="p-4 overflow-y-auto max-h-[60vh]">
+                    Loading...
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = window.location.hostname === 'localhost' 
+            ? 'http://localhost:8000/api/v1'
+            : '/api/v1';
+        
+        let trendChart = null;
+        let distributionChart = null;
+        let currentProject = '';
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadProjects();
+            refreshData();
+            
+            // Auto refresh every 30 seconds
+            setInterval(refreshData, 30000);
+        });
+
+        document.getElementById('projectFilter').addEventListener('change', (e) => {
+            currentProject = e.target.value;
+            refreshData();
+        });
+
+        async function loadProjects() {
+            try {
+                const response = await fetch(`${API_BASE}/projects`);
+                const projects = await response.json();
+                
+                const select = document.getElementById('projectFilter');
+                projects.forEach(p => {
+                    const option = document.createElement('option');
+                    option.value = p.project;
+                    option.textContent = `${p.project} (${p.run_count} runs)`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load projects:', error);
+            }
+        }
+
+        async function refreshData() {
+            await Promise.all([
+                loadStats(),
+                loadRuns(),
+                loadTrends()
+            ]);
+        }
+
+        async function loadStats() {
+            if (!currentProject) {
+                // Load aggregate stats from runs
+                try {
+                    const response = await fetch(`${API_BASE}/runs?limit=100`);
+                    const runs = await response.json();
+                    
+                    const total = runs.length;
+                    const totalTests = runs.reduce((sum, r) => sum + r.total, 0);
+                    const totalFailed = runs.reduce((sum, r) => sum + r.failed, 0);
+                    const avgPassRate = runs.length > 0 
+                        ? runs.reduce((sum, r) => sum + r.pass_rate, 0) / runs.length 
+                        : 0;
+                    
+                    document.getElementById('totalRuns').textContent = total;
+                    document.getElementById('avgPassRate').textContent = avgPassRate.toFixed(1) + '%';
+                    document.getElementById('totalTests').textContent = totalTests.toLocaleString();
+                    document.getElementById('totalFailed').textContent = totalFailed.toLocaleString();
+                } catch (error) {
+                    console.error('Failed to load stats:', error);
+                }
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/stats/${currentProject}`);
+                const stats = await response.json();
+                
+                document.getElementById('totalRuns').textContent = stats.total_runs;
+                document.getElementById('avgPassRate').textContent = stats.avg_pass_rate.toFixed(1) + '%';
+                document.getElementById('totalTests').textContent = stats.total_tests?.toLocaleString() || '-';
+                document.getElementById('totalFailed').textContent = stats.total_failed?.toLocaleString() || '-';
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        async function loadRuns() {
+            try {
+                const url = currentProject 
+                    ? `${API_BASE}/runs?project=${currentProject}&limit=20`
+                    : `${API_BASE}/runs?limit=20`;
+                    
+                const response = await fetch(url);
+                const runs = await response.json();
+                
+                const tbody = document.getElementById('runsTable');
+                
+                if (runs.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="9" class="px-4 py-8 text-center text-gray-500">
+                                No test runs found. Submit your first run via the API!
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+                
+                tbody.innerHTML = runs.map(run => `
+                    <tr class="border-t border-gray-700 hover:bg-gray-750">
+                        <td class="px-4 py-3">
+                            <span class="inline-block w-3 h-3 rounded-full ${run.status === 'passed' ? 'status-passed' : 'status-failed'}"></span>
+                        </td>
+                        <td class="px-4 py-3 font-mono text-sm">${run.run_id}</td>
+                        <td class="px-4 py-3">${run.project}</td>
+                        <td class="px-4 py-3 text-gray-400">${run.branch}</td>
+                        <td class="px-4 py-3">
+                            <span class="${run.pass_rate >= 90 ? 'text-green-400' : run.pass_rate >= 70 ? 'text-yellow-400' : 'text-red-400'}">
+                                ${run.pass_rate.toFixed(1)}%
+                            </span>
+                        </td>
+                        <td class="px-4 py-3">
+                            <span class="text-green-400">${run.passed}</span> /
+                            <span class="text-red-400">${run.failed}</span> /
+                            <span class="text-gray-400">${run.skipped}</span>
+                        </td>
+                        <td class="px-4 py-3 text-gray-400">${(run.duration_ms / 1000).toFixed(1)}s</td>
+                        <td class="px-4 py-3 text-gray-400 text-sm">${formatTime(run.started_at)}</td>
+                        <td class="px-4 py-3">
+                            ${run.failed > 0 ? `
+                                <button onclick="showFailures('${run.run_id}')" 
+                                        class="text-red-400 hover:text-red-300 text-sm">
+                                    View Failures
+                                </button>
+                            ` : ''}
+                        </td>
+                    </tr>
+                `).join('');
+                
+                // Update distribution chart
+                updateDistributionChart(runs);
+                
+            } catch (error) {
+                console.error('Failed to load runs:', error);
+                document.getElementById('runsTable').innerHTML = `
+                    <tr>
+                        <td colspan="9" class="px-4 py-8 text-center text-red-400">
+                            Failed to load data. Is the API running?
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        async function loadTrends() {
+            if (!currentProject) {
+                // Show empty chart or aggregate
+                if (trendChart) {
+                    trendChart.data.labels = [];
+                    trendChart.data.datasets[0].data = [];
+                    trendChart.update();
+                }
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/trends/${currentProject}?days=30`);
+                const trends = await response.json();
+                
+                const labels = trends.map(t => t.date).reverse();
+                const data = trends.map(t => t.pass_rate).reverse();
+                
+                if (trendChart) {
+                    trendChart.data.labels = labels;
+                    trendChart.data.datasets[0].data = data;
+                    trendChart.update();
+                } else {
+                    const ctx = document.getElementById('trendChart').getContext('2d');
+                    trendChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Pass Rate %',
+                                data: data,
+                                borderColor: '#10b981',
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                fill: true,
+                                tension: 0.3
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: { display: false }
+                            },
+                            scales: {
+                                y: {
+                                    min: 0,
+                                    max: 100,
+                                    grid: { color: '#374151' },
+                                    ticks: { color: '#9ca3af' }
+                                },
+                                x: {
+                                    grid: { color: '#374151' },
+                                    ticks: { color: '#9ca3af' }
+                                }
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load trends:', error);
+            }
+        }
+
+        function updateDistributionChart(runs) {
+            const totals = runs.reduce((acc, run) => ({
+                passed: acc.passed + run.passed,
+                failed: acc.failed + run.failed,
+                skipped: acc.skipped + run.skipped,
+                flaky: acc.flaky + (run.flaky || 0)
+            }), { passed: 0, failed: 0, skipped: 0, flaky: 0 });
+            
+            if (distributionChart) {
+                distributionChart.data.datasets[0].data = [
+                    totals.passed, totals.failed, totals.skipped, totals.flaky
+                ];
+                distributionChart.update();
+            } else {
+                const ctx = document.getElementById('distributionChart').getContext('2d');
+                distributionChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Passed', 'Failed', 'Skipped', 'Flaky'],
+                        datasets: [{
+                            data: [totals.passed, totals.failed, totals.skipped, totals.flaky],
+                            backgroundColor: ['#10b981', '#ef4444', '#6b7280', '#f59e0b']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                labels: { color: '#9ca3af' }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        async function showFailures(runId) {
+            const modal = document.getElementById('failedModal');
+            const list = document.getElementById('failedTestsList');
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            list.innerHTML = 'Loading...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/runs/${runId}/failures`);
+                const failures = await response.json();
+                
+                if (failures.length === 0) {
+                    list.innerHTML = '<p class="text-gray-400">No failed tests found.</p>';
+                    return;
+                }
+                
+                list.innerHTML = failures.map(f => `
+                    <div class="mb-4 p-3 bg-gray-900 rounded border border-gray-700">
+                        <div class="font-mono text-sm text-red-400 mb-2">${f.name}</div>
+                        ${f.browser ? `<div class="text-xs text-gray-500 mb-2">Browser: ${f.browser}</div>` : ''}
+                        ${f.error_message ? `
+                            <pre class="text-xs bg-black p-2 rounded overflow-x-auto text-gray-300">${escapeHtml(f.error_message)}</pre>
+                        ` : ''}
+                        ${f.stack_trace ? `
+                            <details class="mt-2">
+                                <summary class="text-xs text-gray-500 cursor-pointer">Stack trace</summary>
+                                <pre class="text-xs bg-black p-2 rounded overflow-x-auto text-gray-400 mt-1">${escapeHtml(f.stack_trace)}</pre>
+                            </details>
+                        ` : ''}
+                    </div>
+                `).join('');
+            } catch (error) {
+                list.innerHTML = `<p class="text-red-400">Failed to load failures: ${error.message}</p>`;
+            }
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('failedModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function formatTime(isoString) {
+            const date = new Date(isoString);
+            return date.toLocaleString();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Close modal on outside click
+        document.getElementById('failedModal').addEventListener('click', (e) => {
+            if (e.target.id === 'failedModal') closeModal();
+        });
+    </script>
+</body>
+</html>

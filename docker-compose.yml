@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: qa-dashboard-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: qa_dashboard
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qa_dashboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qa-network
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: qa-dashboard-redis
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qa-network
+    restart: unless-stopped
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: qa-dashboard-backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/qa_dashboard
+      - REDIS_URL=redis://redis:6379
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - qa-network
+    restart: unless-stopped
+    # For development, you can expose directly:
+    ports:
+      - "8000:8000"
+
+  # Nginx Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: qa-dashboard-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - qa-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  qa-network:
+    driver: bridge
