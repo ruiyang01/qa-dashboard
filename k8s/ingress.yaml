@@ -20,13 +20,13 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: my-qa-frontend
+                name: qa-dashboard-frontend
                 port:
                   number: 80
           - path: /api
             pathType: Prefix
             backend:
               service:
-                name: my-qa-backend
+                name: qa-dashboard-backend
                 port:
                   number: 8000
