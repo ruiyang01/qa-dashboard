@@ -67,3 +67,8 @@ redis:
     limits:
       memory: "128Mi"
       cpu: "200m"
+
+# ============ Ingress 配置 ============
+ingress:
+  host: qa.local
+  tlsSecret: qa-local-tls
