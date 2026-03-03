@@ -1,0 +1,69 @@
+# QA Dashboard Helm Chart - 配置文件
+# 修改这些值来定制你的部署
+
+# ============ Backend 配置 ============
+backend:
+  replicas: 2
+  image:
+    repository: qa-dashboard-backend
+    tag: latest
+    pullPolicy: Never  # 本地镜像用 Never，远程用 Always
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+# ============ Frontend 配置 ============
+frontend:
+  replicas: 2
+  image:
+    repository: qa-dashboard-frontend
+    tag: latest
+    pullPolicy: Never
+  service:
+    type: NodePort
+    nodePort: 30080
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+
+# ============ PostgreSQL 配置 ============
+postgres:
+  replicas: 1
+  image:
+    repository: postgres
+    tag: 15-alpine
+  auth:
+    username: postgres
+    password: postgres
+    database: qa_dashboard
+  storage:
+    size: 1Gi
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+# ============ Redis 配置 ============
+redis:
+  replicas: 1
+  image:
+    repository: redis
+    tag: 7-alpine
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
